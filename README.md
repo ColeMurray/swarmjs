@@ -2,7 +2,7 @@
 
 [![npm version](https://badge.fury.io/js/swarmjs-node.svg)](https://badge.fury.io/js/swarmjs-node)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Build Status](https://github.com/ColeMurray/swarmjs-node/actions/workflows/ci.yaml/badge.svg)](https://github.com/ColeMurray/swarmjs-node/actions/workflows/ci.yaml)
+[![Build Status](https://github.com/ColeMurray/swarmjs/actions/workflows/ci.yaml/badge.svg)](https://github.com/ColeMurray/swarmjs/actions/workflows/ci.yaml)
 
 SwarmJS-Node is a TypeScript library implementation that `o1-mini` generated from OpenAI's Swarm repository.
 
@@ -42,8 +42,8 @@ Below is a simple example demonstrating how to initialize the Swarm client, defi
 1. **Clone the Repository:**
 
    ```bash
-   git clone https://github.com/ColeMurray/swarmjs-node.git
-   cd swarmjs-node
+   git clone https://github.com/ColeMurray/swarmjs.git
+   cd swarmjs
    ```
 
 2. **Install Dependencies:**
