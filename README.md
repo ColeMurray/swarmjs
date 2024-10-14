@@ -228,7 +228,7 @@ const multiplyFunction: AgentFunction = {
 The `runDemoLoop` function initializes the interactive CLI for engaging with the Swarm API.
 
 ```typescript
-import { runDemoLoop } from 'swarmjs-node/repl';
+import { runDemoLoop } from 'swarmjs-node';
 
 const agent = new Agent({
     name: 'CalculatorAgent',
@@ -333,7 +333,7 @@ Contributions are welcome! Please follow these steps to contribute:
 2. **Clone Your Fork:**
 
    ```bash
-   git clone https://github.com/ColeMurray/swarmjs-node.git
+   git clone https://github.com/ColeMurray/swarmjs.git
    cd swarmjs-node
    ```
 
@@ -380,7 +380,7 @@ This project is licensed under the [MIT License](./LICENSE). You are free to use
 
 ## 📫 Contact
 
-For any inquiries or support, please open an issue on the [GitHub repository](https://github.com/ColeMurray/swarmjs-node/issues).
+For any inquiries or support, please open an issue on the [GitHub repository](https://github.com/ColeMurray/swarmjs/issues).
 
 ## 🌟 Acknowledgments
 
