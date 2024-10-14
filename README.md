@@ -2,7 +2,7 @@
 
 [![npm version](https://badge.fury.io/js/swarmjs-node.svg)](https://badge.fury.io/js/swarmjs-node)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Build Status](https://github.com/ColeMurray/swarmjs-node/actions/workflows/ci.yml/badge.svg)](https://github.com/ColeMurray/swarmjs-node/actions/workflows/ci.yml)
+[![Build Status](https://github.com/ColeMurray/swarmjs-node/actions/workflows/ci.yaml/badge.svg)](https://github.com/ColeMurray/swarmjs-node/actions/workflows/ci.yaml)
 
 SwarmJS-Node is a TypeScript library implementation that `o1-mini` generated from OpenAI's Swarm repository.
 
