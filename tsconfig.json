@@ -5,12 +5,12 @@
         "strict": true,
         "esModuleInterop": true,
         "outDir": "./dist",
-        "rootDir": "./",
+        "rootDir": "swarm",
         "resolveJsonModule": true,
         "skipLibCheck": true,
         "declaration": true,
         "sourceMap": true
     },
-    "include": ["swarm/**/*", "examples/**/*"],
+    "include": ["swarm/**/*"],
     "exclude": ["node_modules", "dist"]
 }
