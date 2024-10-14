@@ -1,0 +1,56 @@
+{
+	"name": "swarmjs-node",
+	"version": "0.0.1",
+	"description": "A TypeScript library interfacing with OpenAI's Swarm API for building intelligent agent-driven applications.",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"scripts": {
+		"build": "tsc",
+		"start": "node dist/index.js",
+		"start:example": "node dist/examples/main.js",
+		"test": "echo \"Error: no test specified\" && exit 1",
+		"lint": "eslint --fix . --ext .ts",
+		"lint:fix": "eslint . --ext .ts --fix",
+		"prepare": "npm run build"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ColeMurray/swarmjs-node.git"
+	},
+	"keywords": [
+		"openai",
+		"swarm",
+		"cli",
+		"agent",
+		"typescript",
+		"nodejs"
+	],
+	"author": "Cole Murray",
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/ColeMurray/swarmjs-node/issues"
+	},
+	"homepage": "https://github.com/ColeMurray/swarmjs-node#readme",
+	"dependencies": {
+		"date-fns": "^4.1.0",
+		"lodash": "^4.17.21",
+		"openai": "^4.67.3",
+		"uuid": "^10.0.0"
+	},
+	"devDependencies": {
+		"@types/lodash": "^4.17.10",
+		"@types/node": "^22.7.5",
+		"@types/uuid": "^10.0.0",
+		"typescript": "^5.6.3",
+		"eslint": "^8.0.0",
+		"@typescript-eslint/parser": "^5.0.0",
+		"@typescript-eslint/eslint-plugin": "^5.0.0",
+		"jest": "^29.5.0",
+		"@types/jest": "^29.5.1"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	]
+}
