@@ -1,6 +1,6 @@
 {
 	"name": "swarmjs-node",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"description": "A TypeScript library interfacing with OpenAI's Swarm API for building intelligent agent-driven applications.",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
@@ -15,7 +15,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/ColeMurray/swarmjs-node.git"
+		"url": "git+https://github.com/ColeMurray/swarmjs.git"
 	},
 	"keywords": [
 		"openai",
@@ -28,7 +28,7 @@
 	"author": "Cole Murray",
 	"license": "MIT",
 	"bugs": {
-		"url": "https://github.com/ColeMurray/swarmjs-node/issues"
+		"url": "https://github.com/ColeMurray/swarmjs/issues"
 	},
 	"homepage": "https://github.com/ColeMurray/swarmjs-node#readme",
 	"dependencies": {
