@@ -117,12 +117,12 @@ export class Swarm {
         }
     }
 
-    private handleToolCalls(
+    private async handleToolCalls(
         tool_calls: ChatCompletionMessageToolCall[],
         functions: AgentFunction[],
         context_variables: Record<string, any>,
         debug: boolean
-    ): Response {
+    ): Promise<Response> {
         const function_map: Record<string, AgentFunction> = {};
         functions.forEach(func => {
             function_map[func.name] = func;
@@ -134,7 +134,8 @@ export class Swarm {
             context_variables: {},
         });
 
-        tool_calls.forEach(tool_call => {
+        // Process tool calls sequentially to maintain order
+        for (const tool_call of tool_calls) {
             const name = tool_call.function.name;
             if (!(name in function_map)) {
                 debugPrint(debug, `Tool ${name} not found in function map.`);
@@ -144,7 +145,7 @@ export class Swarm {
                     tool_name: name,
                     content: `Error: Tool ${name} not found.`,
                 });
-                return;
+                continue;
             }
 
             const args = JSON.parse(tool_call.function.arguments);
@@ -168,32 +169,37 @@ export class Swarm {
                     tool_name: name,
                     content: `Error: ${e.message}`,
                 });
-                return;
+                continue;
             }
 
             debugPrint(debug, `Processing tool call: ${name} with arguments`, JSON.stringify(validatedArgs));
 
-            // Invoke the function with the validated arguments
-            const raw_result = func.func(validatedArgs);
+            try {
+                // Handle both sync and async functions
+                const raw_result = await Promise.resolve(func.func(validatedArgs));
+                debugPrint(debug, `Raw result: ${JSON.stringify(raw_result)}`);
 
-            console.log(raw_result);
-
-            // const raw_result = func.func(...Object.values(args));
-
-            console.log(raw_result);
-
-            const result: Result = this.handleFunctionResult(raw_result, debug);
-            partialResponse.messages.push({
-                role: 'tool',
-                tool_call_id: tool_call.id,
-                tool_name: name,
-                content: result.value,
-            });
-            Object.assign(partialResponse.context_variables, result.context_variables);
-            if (result.agent) {
-                partialResponse.agent = result.agent;
+                const result: Result = this.handleFunctionResult(raw_result, debug);
+                partialResponse.messages.push({
+                    role: 'tool',
+                    tool_call_id: tool_call.id,
+                    tool_name: name,
+                    content: result.value,
+                });
+                Object.assign(partialResponse.context_variables, result.context_variables);
+                if (result.agent) {
+                    partialResponse.agent = result.agent;
+                }
+            } catch (error: any) {
+                debugPrint(debug, `Error executing function ${name}: ${error.message}`);
+                partialResponse.messages.push({
+                    role: 'tool',
+                    tool_call_id: tool_call.id,
+                    tool_name: name,
+                    content: `Error: ${error.message}`,
+                });
             }
-        });
+        }
 
         return partialResponse;
     }
@@ -275,7 +281,7 @@ export class Swarm {
             });
 
             // Handle function calls, updating context_variables and switching agents
-            const partial_response = this.handleToolCalls(tool_calls, active_agent.functions, ctx_vars, debug);
+            const partial_response = await this.handleToolCalls(tool_calls, active_agent.functions, ctx_vars, debug);
             history.push(...partial_response.messages);
             Object.assign(ctx_vars, partial_response.context_variables);
             if (partial_response.agent) {
@@ -345,7 +351,7 @@ export class Swarm {
             }
 
             // Handle function calls, updating context_variables and switching agents
-            const partial_response = this.handleToolCalls(
+            const partial_response = await this.handleToolCalls(
                 message.tool_calls,
                 active_agent.functions,
                 ctx_vars,

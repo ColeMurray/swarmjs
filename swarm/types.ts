@@ -21,7 +21,7 @@ export interface FunctionDescriptor {
 
 export interface AgentFunction {
   name: string;
-  func: (args: Record<string, any>) => string | Agent | Record<string, any>;
+  func: (args: Record<string, any>) => string | Agent | Record<string, any> | Promise<string | Agent | Record<string, any>>;
   descriptor: FunctionDescriptor;
 }
 
