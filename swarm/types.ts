@@ -4,11 +4,19 @@
  * Represents a function that an agent can perform.
  */
 
+export interface ParameterSchema {
+  type: string;
+  required: boolean;
+  description: string;
+  items?: ParameterSchema;  // For array types
+  properties?: Record<string, ParameterSchema>;  // For object types
+  enum?: any[];  // For enumerated values
+}
 
 export interface FunctionDescriptor {
   name: string;
   description: string;
-  parameters: Record<string, { type: string; required: boolean, description: string }>;
+  parameters: Record<string, ParameterSchema>;
 }
 
 export interface AgentFunction {

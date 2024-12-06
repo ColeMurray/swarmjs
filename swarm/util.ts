@@ -1,7 +1,7 @@
 // Filename: ./swarm/util.ts
 
 import {format} from 'date-fns'; // For date formatting
-import {FunctionDescriptor} from './types';
+import {FunctionDescriptor, ParameterSchema} from './types';
 
 /**
  * Prints debug messages with a timestamp.
@@ -11,7 +11,12 @@ import {FunctionDescriptor} from './types';
 export function debugPrint(debug: boolean, ...args: any[]): void {
     if (!debug) return;
     const timestamp = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
-    const message = args.map(arg => String(arg)).join(' ');
+    const message = args.map(arg => {
+        if (typeof arg === 'object') {
+            return JSON.stringify(arg, null, 2);
+        }
+        return String(arg);
+    }).join(' ');
     console.log(`\x1b[97m[\x1b[90m${timestamp}\x1b[97m]\x1b[90m ${message}\x1b[0m`);
 }
 
@@ -91,32 +96,141 @@ export function mergeChunk(finalResponse: Record<string, any>, delta: Record<str
   delete deltaWithoutToolCalls.tool_calls;
   mergeFields(finalResponse, deltaWithoutToolCalls);
 }
+
+/**
+ * Converts a parameter schema to JSON Schema format.
+ * @param param The parameter schema to convert
+ * @returns The JSON Schema representation
+ */
+function parameterToJsonSchema(param: ParameterSchema): Record<string, any> {
+  const schema: Record<string, any> = {
+    type: param.type,
+    description: param.description
+  };
+
+  // Handle array types
+  if (param.type === 'array' && param.items) {
+    schema.items = parameterToJsonSchema(param.items);
+  }
+
+  // Handle object types
+  if (param.type === 'object' && param.properties) {
+    schema.properties = Object.entries(param.properties).reduce(
+      (acc, [key, prop]) => ({
+        ...acc,
+        [key]: parameterToJsonSchema(prop)
+      }),
+      {}
+    );
+  }
+
+  // Handle enums
+  if (param.enum) {
+    schema.enum = param.enum;
+  }
+
+  return schema;
+}
+
 /**
  * Converts a function descriptor to JSON.
  * @param descriptor descriptor of the function
  * @returns 
  */
 export function functionToJson(descriptor: FunctionDescriptor): Record<string, any> {
-    return {
-      type: 'function',
-      function: {
-        name: descriptor.name,
-        description: descriptor.description,
-        parameters: {
-          type: 'object',
-
-            properties: Object.keys(descriptor.parameters).reduce((acc: Record<string, any>, key) => {
-                acc[key] = { type: descriptor.parameters[key].type, description: descriptor.parameters[key].description };
-                return acc;
-            }, {}),
-          required: Object.keys(descriptor.parameters).filter(key => descriptor.parameters[key].required),
-        },
+  return {
+    type: 'function',
+    function: {
+      name: descriptor.name,
+      description: descriptor.description,
+      parameters: {
+        type: 'object',
+        properties: Object.entries(descriptor.parameters).reduce(
+          (acc, [key, param]) => ({
+            ...acc,
+            [key]: parameterToJsonSchema(param)
+          }),
+          {}
+        ),
+        required: Object.entries(descriptor.parameters)
+          .filter(([_, param]) => param.required)
+          .map(([key]) => key),
       },
-    };
-  }
+    },
+  };
+}
 
+/**
+ * Validates a value against a parameter schema.
+ * Throws an error if validation fails.
+ */
+function validateValue(
+    value: any,
+    param: ParameterSchema,
+    path: string = ''
+): any {
+    const expectedType = param.type.toLowerCase();
+    const actualType = Array.isArray(value) ? 'array' : typeof value;
 
-  /**
+    // Check basic type match
+    if (expectedType !== actualType) {
+        throw new Error(
+            `Invalid type at '${path}': expected '${expectedType}', got '${actualType}'`
+        );
+    }
+
+    // Handle array validation
+    if (expectedType === 'array' && param.items) {
+        return value.map((item: any, index: number) => 
+            validateValue(item, param.items!, `${path}[${index}]`)
+        );
+    }
+
+    // Handle object validation
+    if (expectedType === 'object' && param.properties) {
+        const validatedObj: Record<string, any> = {};
+        
+        // Check required properties
+        const requiredProps = Object.entries(param.properties)
+            .filter(([_, propSchema]) => propSchema.required)
+            .map(([key]) => key);
+
+        for (const required of requiredProps) {
+            if (!(required in value)) {
+                throw new Error(
+                    `Missing required property at '${path ? path + '.' : ''}${required}'`
+                );
+            }
+        }
+
+        // Validate each property
+        for (const [key, propValue] of Object.entries(value)) {
+            const propSchema = param.properties[key];
+            if (!propSchema) {
+                // Skip validation for properties not in schema
+                validatedObj[key] = propValue;
+                continue;
+            }
+            validatedObj[key] = validateValue(
+                propValue,
+                propSchema,
+                path ? `${path}.${key}` : key
+            );
+        }
+        return validatedObj;
+    }
+
+    // Handle enum validation
+    if (param.enum && !param.enum.includes(value)) {
+        throw new Error(
+            `Invalid value at '${path}': expected one of [${param.enum.join(', ')}], got '${value}'`
+        );
+    }
+
+    return value;
+}
+
+/**
  * Validates the arguments against the function descriptor.
  * Throws an error if validation fails.
  */
@@ -124,23 +238,18 @@ export function validateArguments(
     args: any,
     descriptor: FunctionDescriptor
 ): Record<string, any> {
-    const validatedArgs: Record<string, any> = {};
+    const schema: ParameterSchema = {
+        type: 'object',
+        properties: descriptor.parameters,
+        description: 'Root validation schema',
+        required: false
+    };
 
-    for (const key in descriptor.parameters) {
-        const param = descriptor.parameters[key];
-        if (param.required && !(key in args)) {
-            throw new Error(`Missing required parameter: ${key}`);
-        }
-        if (key in args) {
-            // Basic type validation; can be enhanced for more complex types
-            const expectedType = param.type.toLowerCase();
-            const actualType = typeof args[key];
-            if (actualType !== expectedType) {
-                throw new Error(`Invalid type for parameter '${key}': expected '${expectedType}', got '${actualType}'`);
-            }
-            validatedArgs[key] = args[key];
-        }
+    try {
+        return validateValue(args, schema);
+    } catch (error: unknown) {
+        throw new Error(
+            `Validation failed for function '${descriptor.name}': ${(error as Error).message}`
+        );
     }
-
-    return validatedArgs;
 }
