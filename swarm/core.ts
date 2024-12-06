@@ -148,7 +148,7 @@ export class Swarm {
             }
 
             const args = JSON.parse(tool_call.function.arguments);
-            console.log(args);
+            console.log(`Processing tool call: ${name} with arguments`, JSON.stringify(args));
             debugPrint(debug, `Processing tool call: ${name} with arguments`, JSON.stringify(args));
 
             const func = function_map[name];
