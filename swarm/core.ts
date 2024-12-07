@@ -12,6 +12,7 @@ import {
 } from './types';
 import { ChatCompletion, ChatCompletionMessageToolCall, ChatCompletionChunk } from 'openai/resources';
 import { Stream } from 'openai/streaming';
+import { Langfuse } from 'langfuse';
 
 const CTX_VARS_NAME = 'context_variables';
 
@@ -27,47 +28,68 @@ interface SwarmRunOptions {
     max_tokens?: number;
 }
 
+interface SwarmConfig {
+    apiKey?: string;
+    langfuse?: {
+        publicKey: string;
+        secretKey: string;
+        baseUrl?: string;
+    };
+}
+
 export class Swarm {
     private client: OpenAI;
+    private langfuse?: Langfuse;
 
-    constructor(apiKey?: string) {
-        if (apiKey) {
-            this.client = new OpenAI({ apiKey });
+    constructor(config?: SwarmConfig) {
+        if (config?.apiKey) {
+            this.client = new OpenAI({ apiKey: config.apiKey });
         } else {
             // Default configuration
             this.client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         }
-    }
-    
 
-    private getChatCompletion(
+        // Initialize Langfuse if config is provided
+        if (config?.langfuse) {
+            this.langfuse = new Langfuse({
+                publicKey: config.langfuse.publicKey,
+                secretKey: config.langfuse.secretKey,
+                baseUrl: config.langfuse.baseUrl,
+            });
+        }
+    }
+
+    private async getChatCompletion(
         agent: Agent,
         history: Array<any>,
         context_variables: Record<string, any>,
         model_override?: string,
         stream?: false,
         debug?: boolean,
-        max_tokens?: number
+        max_tokens?: number,
+        trace?: any
     ): Promise<ChatCompletion>;
     
-    private getChatCompletion(
+    private async getChatCompletion(
         agent: Agent,
         history: Array<any>,
         context_variables: Record<string, any>,
         model_override?: string,
         stream?: true,
         debug?: boolean,
-        max_tokens?: number
+        max_tokens?: number,
+        trace?: any
     ): Promise<Stream<ChatCompletionChunk>>;
     
-    private getChatCompletion(
+    private async getChatCompletion(
         agent: Agent,
         history: Array<any>,
         context_variables: Record<string, any>,
         model_override = '',
         stream = false,
         debug = false,
-        max_tokens?: number
+        max_tokens?: number,
+        trace?: any
     ): Promise<ChatCompletion | Stream<ChatCompletionChunk>> {
         const ctxVars = { ...context_variables };
         const instructions = typeof agent.instructions === 'function' ? agent.instructions(ctxVars) : agent.instructions;
@@ -103,7 +125,41 @@ export class Swarm {
             createParams.parallel_tool_calls = agent.parallel_tool_calls;
         }
 
-        return this.client.chat.completions.create(createParams);
+        let generation;
+        if (this.langfuse && trace) {
+            console.log('Langfuse is enabled, generating generation');
+            generation = trace.generation({
+                name: "chat-completion",
+                model: createParams.model,
+                modelParameters: {
+                    max_tokens: max_tokens,
+                    tool_choice: agent.tool_choice,
+                    parallel_tool_calls: agent.parallel_tool_calls,
+                },
+                input: messages,
+            });
+        }
+
+        try {
+            const completion = await this.client.chat.completions.create(createParams);
+            
+            if (generation) {
+                generation.end({
+                    output: stream ? "streaming response" : completion,
+                });
+            }
+            
+            return completion;
+        } catch (error) {
+            if (generation) {
+                generation.end({
+                    output: error,
+                    level: "ERROR",
+                    statusMessage: (error as Error).message,
+                });
+            }
+            throw error;
+        }
     }
 
     private handleFunctionResult(result: any, debug: boolean): Result {
@@ -129,7 +185,8 @@ export class Swarm {
         tool_calls: ChatCompletionMessageToolCall[],
         functions: AgentFunction[],
         context_variables: Record<string, any>,
-        debug: boolean
+        debug: boolean,
+        trace?: any
     ): Promise<Response> {
         const function_map: Record<string, AgentFunction> = {};
         functions.forEach(func => {
@@ -224,88 +281,121 @@ export class Swarm {
             max_tokens,
         } = options;
 
+        let trace;
+        if (this.langfuse) {
+            console.log('Langfuse is enabled');
+            trace = this.langfuse.trace({
+                name: "swarm-execution",
+                metadata: {
+                    agent: agent.name,
+                    model: model_override || agent.model,
+                    stream: true,
+                    max_turns,
+                    execute_tools,
+                },
+            });
+        }
+
         let active_agent = agent;
         const ctx_vars = cloneDeep(context_variables);
         const history = cloneDeep(messages);
         const init_len = history.length;
 
-        while ((history.length - init_len) < max_turns) {
-            const message: any = {
-                content: '',
-                sender: agent.name,
-                role: 'assistant',
-                function_call: null,
-                tool_calls: {},
-            };
-
-            // Get completion with current history and agent
-            const completion = await this.getChatCompletion(
-                active_agent,
-                history,
-                ctx_vars,
-                model_override,
-                true,
-                debug,
-                max_tokens
-            );
-
-            yield { delim: 'start' };
-            for await (const chunk of completion) {
-                debugPrint(debug, 'Received chunk:', JSON.stringify(chunk));
-                const delta = chunk.choices[0].delta;
-                if (chunk.choices[0].delta.role === 'assistant') {
-                    // @ts-ignore
-                    delta.sender = active_agent.name;
-                }
-                yield delta;
-                delete delta.role;
-                // @ts-ignore
-                delete delta.sender;
-                mergeChunk(message, delta);
-            }
-            yield { delim: 'end' };
-
-            message.tool_calls = Object.values(message.tool_calls);
-            if (message.tool_calls.length === 0) {
-                message.tool_calls = null;
-            }
-            debugPrint(debug, 'Received completion:', message);
-            history.push(message);
-
-            if (!message.tool_calls || !execute_tools) {
-                debugPrint(debug, 'Ending turn.');
-                break;
-            }
-
-            // Convert tool_calls to objects
-            const tool_calls: ChatCompletionMessageToolCall[] = message.tool_calls.map((tc: any) => {
-                const func = new ToolFunction({
-                    arguments: tc.function.arguments,
-                    name: tc.function.name,
-                });
-                return {
-                    id: tc.id,
-                    function: func,
-                    type: tc.type,
+        try {
+            while ((history.length - init_len) < max_turns) {
+                const message: any = {
+                    content: '',
+                    sender: agent.name,
+                    role: 'assistant',
+                    function_call: null,
+                    tool_calls: {},
                 };
-            });
 
-            // Handle function calls, updating context_variables and switching agents
-            const partial_response = await this.handleToolCalls(tool_calls, active_agent.functions, ctx_vars, debug);
-            history.push(...partial_response.messages);
-            Object.assign(ctx_vars, partial_response.context_variables);
-            if (partial_response.agent) {
-                active_agent = partial_response.agent;
+                // Get completion with current history and agent
+                const completion = await this.getChatCompletion(
+                    active_agent,
+                    history,
+                    ctx_vars,
+                    model_override,
+                    true,
+                    debug,
+                    max_tokens,
+                    trace
+                );
+
+                yield { delim: 'start' };
+                for await (const chunk of completion) {
+                    debugPrint(debug, 'Received chunk:', JSON.stringify(chunk));
+                    const delta = chunk.choices[0].delta;
+                    if (chunk.choices[0].delta.role === 'assistant') {
+                        // @ts-ignore
+                        delta.sender = active_agent.name;
+                    }
+                    yield delta;
+                    delete delta.role;
+                    // @ts-ignore
+                    delete delta.sender;
+                    mergeChunk(message, delta);
+                }
+                yield { delim: 'end' };
+
+                message.tool_calls = Object.values(message.tool_calls);
+                if (message.tool_calls.length === 0) {
+                    message.tool_calls = null;
+                }
+                debugPrint(debug, 'Received completion:', message);
+                history.push(message);
+
+                if (!message.tool_calls || !execute_tools) {
+                    debugPrint(debug, 'Ending turn.');
+                    break;
+                }
+
+                // Convert tool_calls to objects
+                const tool_calls: ChatCompletionMessageToolCall[] = message.tool_calls.map((tc: any) => {
+                    const func = new ToolFunction({
+                        arguments: tc.function.arguments,
+                        name: tc.function.name,
+                    });
+                    return {
+                        id: tc.id,
+                        function: func,
+                        type: tc.type,
+                    };
+                });
+
+                // Handle function calls, updating context_variables and switching agents
+                const partial_response = await this.handleToolCalls(tool_calls, active_agent.functions, ctx_vars, debug, trace);
+                history.push(...partial_response.messages);
+                Object.assign(ctx_vars, partial_response.context_variables);
+                if (partial_response.agent) {
+                    active_agent = partial_response.agent;
+                }
             }
-        }
 
-        yield {
-            response: new Response({
+            const response = new Response({
                 messages: history.slice(init_len),
                 agent: active_agent,
                 context_variables: ctx_vars,
-            }),
-        };
+            });
+
+            if (trace) {
+                trace.update({
+                    output: response,
+                });
+            }
+
+            yield {
+                response,
+            };
+        } catch (error) {
+            if (trace) {
+                trace.update({
+                    output: error,
+                });
+            }
+            throw error;
+        }
     }
     
     async run(
@@ -322,6 +412,21 @@ export class Swarm {
             execute_tools = true,
             max_tokens,
         } = options;
+
+        let trace;
+        if (this.langfuse) {
+            console.log('Langfuse is enabled');
+            trace = this.langfuse.trace({
+                name: "swarm-execution",
+                metadata: {
+                    agent: agent.name,
+                    model: model_override || agent.model,
+                    stream,
+                    max_turns,
+                    execute_tools,
+                },
+            });
+        }
 
         if (stream) {
             return this.runAndStream({
@@ -341,46 +446,71 @@ export class Swarm {
         const history = cloneDeep(messages);
         const init_len = history.length;
 
-        while ((history.length - init_len) < max_turns && active_agent) {
-            // Get completion with current history and agent
-            const completion: ChatCompletion = await this.getChatCompletion(
-                active_agent,
-                history,
-                ctx_vars,
-                model_override,
-                false,
-                debug,
-                max_tokens
-            );
+        try {
+            while ((history.length - init_len) < max_turns && active_agent) {
+                // Get completion with current history and agent
+                const completion: ChatCompletion = await this.getChatCompletion(
+                    active_agent,
+                    history,
+                    ctx_vars,
+                    model_override,
+                    false,
+                    debug,
+                    max_tokens,
+                    trace
+                );
 
-            const messageData = completion.choices[0].message;
-            debugPrint(debug, 'Received completion:', messageData);
-            const message: any = { ...messageData, sender: active_agent.name };
-            history.push(message); // Adjust as needed
+                const messageData = completion.choices[0].message;
+                debugPrint(debug, 'Received completion:', messageData);
+                const message: any = { ...messageData, sender: active_agent.name };
+                history.push(message);
 
-            if (!message.tool_calls || !execute_tools) {
-                debugPrint(debug, 'Ending turn.');
-                break;
+                if (!message.tool_calls || !execute_tools) {
+                    debugPrint(debug, 'Ending turn.');
+                    break;
+                }
+
+                // Handle function calls, updating context_variables and switching agents
+                const partial_response = await this.handleToolCalls(
+                    message.tool_calls,
+                    active_agent.functions,
+                    ctx_vars,
+                    debug,
+                    trace
+                );
+                history.push(...partial_response.messages);
+                Object.assign(ctx_vars, partial_response.context_variables);
+                if (partial_response.agent) {
+                    active_agent = partial_response.agent;
+                }
             }
 
-            // Handle function calls, updating context_variables and switching agents
-            const partial_response = await this.handleToolCalls(
-                message.tool_calls,
-                active_agent.functions,
-                ctx_vars,
-                debug
-            );
-            history.push(...partial_response.messages);
-            Object.assign(ctx_vars, partial_response.context_variables);
-            if (partial_response.agent) {
-                active_agent = partial_response.agent;
+            const response = new Response({
+                messages: history.slice(init_len),
+                agent: active_agent,
+                context_variables: ctx_vars,
+            });
+
+            if (trace) {
+                trace.update({
+                    output: response,
+                });
             }
+
+            return response;
+        } catch (error) {
+            if (trace) {
+                trace.update({
+                    output: error,
+                });
+            }
+            throw error;
         }
+    }
 
-        return new Response({
-            messages: history.slice(init_len),
-            agent: active_agent,
-            context_variables: ctx_vars,
-        });
+    async shutdown() {
+        if (this.langfuse) {
+            await this.langfuse.shutdownAsync();
+        }
     }
 }
