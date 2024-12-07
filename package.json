@@ -1,6 +1,6 @@
 {
 	"name": "swarmjs-node",
-	"version": "0.0.8",
+	"version": "0.0.9",
 	"description": "A TypeScript library interfacing with OpenAI's Swarm API for building intelligent agent-driven applications.",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
