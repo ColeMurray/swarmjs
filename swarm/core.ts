@@ -24,6 +24,7 @@ interface SwarmRunOptions {
     debug?: boolean;
     max_turns?: number;
     execute_tools?: boolean;
+    max_tokens?: number;
 }
 
 export class Swarm {
@@ -45,7 +46,8 @@ export class Swarm {
         context_variables: Record<string, any>,
         model_override?: string,
         stream?: false,
-        debug?: boolean
+        debug?: boolean,
+        max_tokens?: number
     ): Promise<ChatCompletion>;
     
     private getChatCompletion(
@@ -54,7 +56,8 @@ export class Swarm {
         context_variables: Record<string, any>,
         model_override?: string,
         stream?: true,
-        debug?: boolean
+        debug?: boolean,
+        max_tokens?: number
     ): Promise<Stream<ChatCompletionChunk>>;
     
     private getChatCompletion(
@@ -63,7 +66,8 @@ export class Swarm {
         context_variables: Record<string, any>,
         model_override = '',
         stream = false,
-        debug = false
+        debug = false,
+        max_tokens?: number
     ): Promise<ChatCompletion | Stream<ChatCompletionChunk>> {
         const ctxVars = { ...context_variables };
         const instructions = typeof agent.instructions === 'function' ? agent.instructions(ctxVars) : agent.instructions;
@@ -90,6 +94,10 @@ export class Swarm {
             tool_choice: agent.tool_choice,
             stream,
         };
+
+        if (max_tokens !== undefined) {
+            createParams.max_tokens = max_tokens;
+        }
 
         if (tools.length > 0) {
             createParams.parallel_tool_calls = agent.parallel_tool_calls;
@@ -213,6 +221,7 @@ export class Swarm {
             debug = false,
             max_turns = Infinity,
             execute_tools = true,
+            max_tokens,
         } = options;
 
         let active_agent = agent;
@@ -236,7 +245,8 @@ export class Swarm {
                 ctx_vars,
                 model_override,
                 true,
-                debug
+                debug,
+                max_tokens
             );
 
             yield { delim: 'start' };
@@ -310,6 +320,7 @@ export class Swarm {
             debug = false,
             max_turns = Infinity,
             execute_tools = true,
+            max_tokens,
         } = options;
 
         if (stream) {
@@ -321,6 +332,7 @@ export class Swarm {
                 debug,
                 max_turns,
                 execute_tools,
+                max_tokens,
             });
         }
 
@@ -337,7 +349,8 @@ export class Swarm {
                 ctx_vars,
                 model_override,
                 false,
-                debug
+                debug,
+                max_tokens
             );
 
             const messageData = completion.choices[0].message;
