@@ -202,13 +202,34 @@ export class Swarm {
         // Process tool calls sequentially to maintain order
         for (const tool_call of tool_calls) {
             const name = tool_call.function.name;
+            let toolSpan;
+            
+            if (this.langfuse && trace) {
+                toolSpan = trace.span({
+                    name: `tool-${name}`,
+                    input: {
+                        arguments: tool_call.function.arguments,
+                        id: tool_call.id,
+                        type: tool_call.type
+                    }
+                });
+            }
+
             if (!(name in function_map)) {
                 debugPrint(debug, `Tool ${name} not found in function map.`);
+                const errorMessage = `Error: Tool ${name} not found.`;
+                if (toolSpan) {
+                    toolSpan.end({
+                        output: errorMessage,
+                        level: "ERROR",
+                        statusMessage: "Tool not found"
+                    });
+                }
                 partialResponse.messages.push({
                     role: 'tool',
                     tool_call_id: tool_call.id,
                     tool_name: name,
-                    content: `Error: Tool ${name} not found.`,
+                    content: errorMessage,
                 });
                 continue;
             }
@@ -227,12 +248,20 @@ export class Swarm {
             try {
                 validatedArgs = validateArguments(args, func.descriptor);
             } catch (e: any) {
+                const errorMessage = `Error: ${e.message}`;
                 debugPrint(debug, `Argument validation failed for function ${name}: ${e.message}`);
+                if (toolSpan) {
+                    toolSpan.end({
+                        output: errorMessage,
+                        level: "ERROR",
+                        statusMessage: "Argument validation failed"
+                    });
+                }
                 partialResponse.messages.push({
                     role: 'tool',
                     tool_call_id: tool_call.id,
                     tool_name: name,
-                    content: `Error: ${e.message}`,
+                    content: errorMessage,
                 });
                 continue;
             }
@@ -245,6 +274,16 @@ export class Swarm {
                 debugPrint(debug, `Raw result: ${JSON.stringify(raw_result)}`);
 
                 const result: Result = this.handleFunctionResult(raw_result, debug);
+                if (toolSpan) {
+                    toolSpan.end({
+                        output: result,
+                        level: "INFO",
+                        statusMessage: "Success",
+                        metadata: {
+                            resultType: result instanceof Result ? 'Result' : typeof result
+                        }
+                    });
+                }
                 partialResponse.messages.push({
                     role: 'tool',
                     tool_call_id: tool_call.id,
@@ -257,6 +296,17 @@ export class Swarm {
                 }
             } catch (error: any) {
                 debugPrint(debug, `Error executing function ${name}: ${error.message}`);
+                if (toolSpan) {
+                    toolSpan.end({
+                        output: error.message,
+                        level: "ERROR",
+                        statusMessage: "Execution failed",
+                        metadata: {
+                            errorType: error.name,
+                            stack: error.stack
+                        }
+                    });
+                }
                 partialResponse.messages.push({
                     role: 'tool',
                     tool_call_id: tool_call.id,
