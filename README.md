@@ -394,3 +394,96 @@ For any inquiries or support, please open an issue on the [GitHub repository](ht
 ---
 
 **Happy Coding! 🚀**
+
+## Enhanced Streaming Capabilities
+
+SwarmJS provides rich streaming capabilities with typed events to make it easier to build real-time applications:
+
+### Stream Event Types
+
+- **RawResponsesStreamEvent**: Low-level token-by-token events from the LLM
+- **RunItemStreamEvent**: Higher-level events for completed items (messages, tool calls, etc.)
+- **AgentUpdatedStreamEvent**: Notifies when the active agent changes
+- **ResponseCompleteEvent**: Indicates the entire run is complete with the final response
+
+### Streaming Example
+
+```typescript
+// Import stream event types
+import { 
+  StreamEvent, 
+  RawResponsesStreamEvent, 
+  RunItemStreamEvent 
+} from 'swarmjs/stream_events';
+import { ItemHelpers } from 'swarmjs/items';
+
+// Initialize and configure your agent...
+
+// Run with streaming enabled
+const stream = await swarm.run({
+  agent,
+  messages: [{ role: 'user', content: 'Tell me a joke' }],
+  stream: true
+});
+
+// Process the stream
+for await (const event of stream) {
+  switch (event.type) {
+    case 'raw_response_event':
+      // Handle token-by-token updates
+      const content = event.data.choices[0]?.delta?.content || '';
+      process.stdout.write(content);
+      break;
+      
+    case 'run_item_stream_event':
+      if (event.name === 'message_output_created') {
+        // Handle completed message
+        console.log('Message complete:', 
+          ItemHelpers.extractTextContent(event.item.raw_item)
+        );
+      }
+      else if (event.name === 'tool_called') {
+        // Handle tool call
+        console.log('Tool called:', event.item.raw_item.function.name);
+      }
+      break;
+      
+    case 'response_complete_event':
+      // Handle completion of the run
+      console.log('Run complete:', event.response);
+      break;
+  }
+}
+```
+
+## Working with Run Items
+
+RunItems represent different components of a run:
+
+- **MessageOutputItem**: Represents a message from the LLM
+- **ToolCallItem**: Represents a tool call from the LLM
+- **ToolCallOutputItem**: Represents the output of a tool call
+
+You can access these items both during streaming and in the final response:
+
+```typescript
+// After a non-streaming run
+const response = await swarm.run({ agent, messages, stream: false });
+
+// Access specific item types
+const messageItems = response.getMessageItems();
+const toolCallItems = response.getToolCallItems();
+const toolOutputItems = response.getToolOutputItems();
+
+// Or access all items
+console.log(`Total items: ${response.items.length}`);
+```
+
+## Advanced Usage
+
+Check out the examples directory for more advanced usage patterns:
+
+- Basic agent with tools
+- Multi-agent orchestration
+- Different streaming patterns
+- Tool execution and error handling
