@@ -13,6 +13,19 @@ import {
 import { ChatCompletion, ChatCompletionMessageToolCall, ChatCompletionChunk } from 'openai/resources';
 import { Stream } from 'openai/streaming';
 import { Langfuse } from 'langfuse';
+import {
+    StreamEvent,
+    RawResponsesStreamEvent,
+    RunItemStreamEvent,
+    AgentUpdatedStreamEvent,
+    ResponseCompleteEvent
+} from './stream_events';
+import {
+    RunItem,
+    MessageOutputItem,
+    ToolCallItem,
+    ToolCallOutputItem
+} from './items';
 
 const CTX_VARS_NAME = 'context_variables';
 
@@ -125,7 +138,7 @@ export class Swarm {
         if (this.langfuse && trace) {
             console.log('Langfuse is enabled, generating generation');
             generation = trace.generation({
-                name: "chat-completion",
+                name: 'chat-completion',
                 model: createParams.model,
                 modelParameters: {
                     max_tokens: max_tokens,
@@ -140,7 +153,7 @@ export class Swarm {
             
             if (generation) {
                 generation.end({
-                    output: stream ? "streaming response" : completion,
+                    output: stream ? 'streaming response' : completion,
                 });
             }
             
@@ -149,7 +162,7 @@ export class Swarm {
             if (generation) {
                 generation.end({
                     output: error,
-                    level: "ERROR",
+                    level: 'ERROR',
                     statusMessage: (error as Error).message,
                 });
             }
@@ -182,7 +195,7 @@ export class Swarm {
         context_variables: Record<string, any>,
         debug: boolean,
         trace?: any
-    ): Promise<Response> {
+    ): Promise<[Response, ToolCallOutputItem[]]> {
         const function_map: Record<string, AgentFunction> = {};
         functions.forEach(func => {
             function_map[func.name] = func;
@@ -192,7 +205,10 @@ export class Swarm {
             messages: [],
             agent: undefined,
             context_variables: {},
+            items: []
         });
+        
+        const toolOutputItems: ToolCallOutputItem[] = [];
 
         // Process tool calls sequentially to maintain order
         for (const tool_call of tool_calls) {
@@ -216,10 +232,26 @@ export class Swarm {
                 if (toolSpan) {
                     toolSpan.end({
                         output: errorMessage,
-                        level: "ERROR",
-                        statusMessage: "Tool not found"
+                        level: 'ERROR',
+                        statusMessage: 'Tool not found'
                     });
                 }
+                
+                const toolOutput = new ToolCallOutputItem({
+                    agent: partialResponse.agent!,
+                    raw_item: {
+                        id: tool_call.id,
+                        type: tool_call.type,
+                        function: {
+                            name: name,
+                            output: errorMessage
+                        }
+                    },
+                    output: errorMessage
+                });
+                
+                toolOutputItems.push(toolOutput);
+                
                 partialResponse.messages.push({
                     role: 'tool',
                     tool_call_id: tool_call.id,
@@ -248,10 +280,26 @@ export class Swarm {
                 if (toolSpan) {
                     toolSpan.end({
                         output: errorMessage,
-                        level: "ERROR",
-                        statusMessage: "Argument validation failed"
+                        level: 'ERROR',
+                        statusMessage: 'Argument validation failed'
                     });
                 }
+                
+                const toolOutput = new ToolCallOutputItem({
+                    agent: partialResponse.agent!,
+                    raw_item: {
+                        id: tool_call.id,
+                        type: tool_call.type,
+                        function: {
+                            name: name,
+                            output: errorMessage
+                        }
+                    },
+                    output: errorMessage
+                });
+                
+                toolOutputItems.push(toolOutput);
+                
                 partialResponse.messages.push({
                     role: 'tool',
                     tool_call_id: tool_call.id,
@@ -272,13 +320,29 @@ export class Swarm {
                 if (toolSpan) {
                     toolSpan.end({
                         output: result,
-                        level: "INFO",
-                        statusMessage: "Success",
+                        level: 'INFO',
+                        statusMessage: 'Success',
                         metadata: {
                             resultType: result instanceof Result ? 'Result' : typeof result
                         }
                     });
                 }
+                
+                const toolOutput = new ToolCallOutputItem({
+                    agent: partialResponse.agent!,
+                    raw_item: {
+                        id: tool_call.id,
+                        type: tool_call.type,
+                        function: {
+                            name: name,
+                            output: result.value
+                        }
+                    },
+                    output: result.value
+                });
+                
+                toolOutputItems.push(toolOutput);
+                
                 partialResponse.messages.push({
                     role: 'tool',
                     tool_call_id: tool_call.id,
@@ -294,14 +358,30 @@ export class Swarm {
                 if (toolSpan) {
                     toolSpan.end({
                         output: error.message,
-                        level: "ERROR",
-                        statusMessage: "Execution failed",
+                        level: 'ERROR',
+                        statusMessage: 'Execution failed',
                         metadata: {
                             errorType: error.name,
                             stack: error.stack
                         }
                     });
                 }
+                
+                const toolOutput = new ToolCallOutputItem({
+                    agent: partialResponse.agent!,
+                    raw_item: {
+                        id: tool_call.id,
+                        type: tool_call.type,
+                        function: {
+                            name: name,
+                            output: `Error: ${error.message}`
+                        }
+                    },
+                    output: `Error: ${error.message}`
+                });
+                
+                toolOutputItems.push(toolOutput);
+                
                 partialResponse.messages.push({
                     role: 'tool',
                     tool_call_id: tool_call.id,
@@ -311,10 +391,10 @@ export class Swarm {
             }
         }
 
-        return partialResponse;
+        return [partialResponse, toolOutputItems];
     }
 
-    async *runAndStream(options: SwarmRunOptions): AsyncIterable<any> {
+    async *runAndStream(options: SwarmRunOptions): AsyncIterable<StreamEvent> {
         const {
             agent,
             messages,
@@ -330,7 +410,7 @@ export class Swarm {
         if (this.langfuse) {
             console.log('Langfuse is enabled');
             trace = this.langfuse.trace({
-                name: "swarm-execution",
+                name: 'swarm-execution',
                 metadata: {
                     agent: agent.name,
                     model: model_override || agent.model,
@@ -345,8 +425,11 @@ export class Swarm {
         const ctx_vars = cloneDeep(context_variables);
         const history = cloneDeep(messages);
         const init_len = history.length;
+        const run_items: RunItem[] = [];
 
         try {
+            let last_agent = active_agent;
+            
             while ((history.length - init_len) < max_turns) {
                 const message: any = {
                     content: '',
@@ -368,21 +451,38 @@ export class Swarm {
                     trace
                 );
 
-                yield { delim: 'start' };
+                // If the agent has changed, emit an agent updated event
+                if (active_agent !== last_agent) {
+                    const agentEvent: AgentUpdatedStreamEvent = {
+                        type: 'agent_updated_stream_event',
+                        new_agent: active_agent
+                    };
+                    yield agentEvent;
+                    last_agent = active_agent;
+                }
+
+                // Process each chunk of the completion
                 for await (const chunk of completion) {
                     debugPrint(debug, 'Received chunk:', JSON.stringify(chunk));
+                    
+                    // Emit raw response event
+                    const rawEvent: RawResponsesStreamEvent = {
+                        type: 'raw_response_event',
+                        data: chunk
+                    };
+                    yield rawEvent;
+                    
                     const delta = chunk.choices[0].delta;
                     if (chunk.choices[0].delta.role === 'assistant') {
                         // @ts-ignore
                         delta.sender = active_agent.name;
                     }
-                    yield delta;
+                    
                     delete delta.role;
                     // @ts-ignore
                     delete delta.sender;
                     mergeChunk(message, delta);
                 }
-                yield { delim: 'end' };
 
                 message.tool_calls = Object.values(message.tool_calls);
                 if (message.tool_calls.length === 0) {
@@ -390,13 +490,29 @@ export class Swarm {
                 }
                 debugPrint(debug, 'Received completion:', message);
                 history.push(message);
+                
+                // Create a message output item
+                const messageItem = new MessageOutputItem({
+                    agent: active_agent,
+                    raw_item: message
+                });
+                run_items.push(messageItem);
+                
+                // Emit message output created event
+                const messageEvent: RunItemStreamEvent = {
+                    type: 'run_item_stream_event',
+                    name: 'message_output_created',
+                    item: messageItem
+                };
+                yield messageEvent;
 
+                // If no tool calls or not executing tools, break out of the loop
                 if (!message.tool_calls || !execute_tools) {
                     debugPrint(debug, 'Ending turn.');
                     break;
                 }
 
-                // Convert tool_calls to objects
+                // Convert tool_calls to objects and emit tool call events
                 const tool_calls: ChatCompletionMessageToolCall[] = message.tool_calls.map((tc: any) => {
                     const func = new ToolFunction({
                         arguments: tc.function.arguments,
@@ -408,20 +524,61 @@ export class Swarm {
                         type: tc.type,
                     };
                 });
+                
+                // Process each tool call
+                for (const tc of tool_calls) {
+                    const toolCallItem = new ToolCallItem({
+                        agent: active_agent,
+                        raw_item: tc
+                    });
+                    run_items.push(toolCallItem);
+                    
+                    // Emit tool called event
+                    const toolEvent: RunItemStreamEvent = {
+                        type: 'run_item_stream_event',
+                        name: 'tool_called',
+                        item: toolCallItem
+                    };
+                    yield toolEvent;
+                }
 
                 // Handle function calls, updating context_variables and switching agents
-                const partial_response = await this.handleToolCalls(tool_calls, active_agent.functions, ctx_vars, debug, trace);
+                const [partial_response, toolOutputItems] = await this.handleToolCalls(
+                    tool_calls, 
+                    active_agent.functions, 
+                    ctx_vars, 
+                    debug, 
+                    trace
+                );
+                
+                // Add the tool output items to the run items
+                run_items.push(...toolOutputItems);
+                
+                // Emit tool output events
+                for (const toolOutput of toolOutputItems) {
+                    const toolOutputEvent: RunItemStreamEvent = {
+                        type: 'run_item_stream_event',
+                        name: 'tool_output',
+                        item: toolOutput
+                    };
+                    yield toolOutputEvent;
+                }
+                
                 history.push(...partial_response.messages);
                 Object.assign(ctx_vars, partial_response.context_variables);
+                
+                // If agent changed, prepare to emit agent updated event on next loop
                 if (partial_response.agent) {
                     active_agent = partial_response.agent;
                 }
             }
 
+            // Create final response
             const response = new Response({
                 messages: history.slice(init_len),
                 agent: active_agent,
                 context_variables: ctx_vars,
+                items: run_items
             });
 
             if (trace) {
@@ -430,9 +587,13 @@ export class Swarm {
                 });
             }
 
-            yield {
-                response,
+            // Emit response complete event
+            const responseEvent: ResponseCompleteEvent = {
+                type: 'response_complete_event',
+                response
             };
+            yield responseEvent;
+            
         } catch (error) {
             if (trace) {
                 trace.update({
@@ -445,7 +606,7 @@ export class Swarm {
     
     async run(
         options: SwarmRunOptions
-    ): Promise<Response | AsyncIterable<any>> {
+    ): Promise<Response | AsyncIterable<StreamEvent>> {
         const {
             agent,
             messages,
@@ -462,7 +623,7 @@ export class Swarm {
         if (this.langfuse) {
             console.log('Langfuse is enabled');
             trace = this.langfuse.trace({
-                name: "swarm-execution",
+                name: 'swarm-execution',
                 metadata: {
                     agent: agent.name,
                     model: model_override || agent.model,
@@ -490,6 +651,7 @@ export class Swarm {
         const ctx_vars = cloneDeep(context_variables);
         const history = cloneDeep(messages);
         const init_len = history.length;
+        const run_items: RunItem[] = [];
 
         try {
             while ((history.length - init_len) < max_turns && active_agent) {
@@ -509,20 +671,40 @@ export class Swarm {
                 debugPrint(debug, 'Received completion:', messageData);
                 const message: any = { ...messageData, sender: active_agent.name };
                 history.push(message);
+                
+                // Create message item
+                const messageItem = new MessageOutputItem({
+                    agent: active_agent,
+                    raw_item: message
+                });
+                run_items.push(messageItem);
 
                 if (!message.tool_calls || !execute_tools) {
                     debugPrint(debug, 'Ending turn.');
                     break;
                 }
+                
+                // Create tool call items
+                for (const tc of message.tool_calls) {
+                    const toolCallItem = new ToolCallItem({
+                        agent: active_agent,
+                        raw_item: tc
+                    });
+                    run_items.push(toolCallItem);
+                }
 
                 // Handle function calls, updating context_variables and switching agents
-                const partial_response = await this.handleToolCalls(
+                const [partial_response, toolOutputItems] = await this.handleToolCalls(
                     message.tool_calls,
                     active_agent.functions,
                     ctx_vars,
                     debug,
                     trace
                 );
+                
+                // Add tool output items
+                run_items.push(...toolOutputItems);
+                
                 history.push(...partial_response.messages);
                 Object.assign(ctx_vars, partial_response.context_variables);
                 if (partial_response.agent) {
@@ -534,6 +716,7 @@ export class Swarm {
                 messages: history.slice(init_len),
                 agent: active_agent,
                 context_variables: ctx_vars,
+                items: run_items
             });
 
             if (trace) {

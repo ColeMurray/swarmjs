@@ -47,17 +47,52 @@ export class Agent {
 }
 
 /**
+ * Forward declaration of RunItem to avoid circular dependencies
+ */
+export type RunItem = any;
+
+/**
  * Represents the response from the Swarm.
  */
 export class Response {
+  /** Messages exchanged during the run */
   messages: Array<any>;
+  
+  /** The final agent that produced the response */
   agent?: Agent;
+  
+  /** Context variables that were updated during the run */
   context_variables: Record<string, any>;
+  
+  /** Items generated during the run (messages, tool calls, etc) */
+  items: RunItem[];
 
   constructor(params: Partial<Response> = {}) {
     this.messages = params.messages || [];
     this.agent = params.agent;
     this.context_variables = params.context_variables || {};
+    this.items = params.items || [];
+  }
+
+  /**
+   * Returns all message items from the run
+   */
+  getMessageItems(): RunItem[] {
+    return this.items.filter(item => item.type === 'message_output_item');
+  }
+
+  /**
+   * Returns all tool call items from the run
+   */
+  getToolCallItems(): RunItem[] {
+    return this.items.filter(item => item.type === 'tool_call_item');
+  }
+
+  /**
+   * Returns all tool output items from the run
+   */
+  getToolOutputItems(): RunItem[] {
+    return this.items.filter(item => item.type === 'tool_call_output_item');
   }
 }
 
